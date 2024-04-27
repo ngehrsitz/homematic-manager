@@ -1353,6 +1353,7 @@ function initGridDevices() {
                 // {name: 'LINK_TARGET_ROLES', index: 'LINK_TARGET_ROLES', width: 100, hidden: true},
                 // {name: 'VERSION', index: 'VERSION', width: 58, fixed: true, align: 'right'}
             ],
+            multiselect: true,
             rowNum: 1000000,
             autowidth: true,
             height: 'auto',
@@ -1360,6 +1361,18 @@ function initGridDevices() {
             sortorder: 'desc',
             viewrecords: true,
             ignoreCase: true,
+            // https://stackoverflow.com/a/44781582
+            beforeSelectRow: function (rowid, e) {
+                if (e.shiftKey == true) {
+                    // SHIFT held --> multi select
+                    return true;
+                } else {
+                    // Reset existing selection
+                    $('[id^="channels_"][id$="_t"]').jqGrid('resetSelection');
+                    // Pass through new item selection
+                    return true;
+                }
+            },
             onSelectRow(rowId) {
                 // Unselect other subgrids but not myself
                 $('[id^="channels_"][id$="_t"]').not('#' + this.id).jqGrid('resetSelection');
@@ -1386,7 +1399,8 @@ function initGridDevices() {
                 $('#clear-device').addClass('ui-state-disabled');
             },
             gridComplete() {
-                // $subgrid.jqGrid('hideCol', 'cb');
+                // hide selection column
+                $subgrid.jqGrid('hideCol', 'cb');
                 $('button.paramset:not(.ui-button)').button();
             }
         };
@@ -1669,41 +1683,45 @@ function dialogRenameDevice() {
     $('#rename-name').val(name === '&nbsp;' ? '' : name);
     $dialogRename.dialog('open');
 }
+
 function reportValueUsage(value) {
     const devSelected = $gridDevices.jqGrid('getGridParam', 'selrow');
-    let chSelected = null;
-    let chGrid = null;
     value = value || 0;
     if (devSelected) {
         alert('error: reportValueUsage on Device'); // eslint-disable-line no-alert
         return;
     }
+    let addresses = []
     $('[id^="channels_"][id$="_t"]').each(function () {
-        if ($(this).jqGrid('getGridParam', 'selrow') > 0) {
-            chSelected = $(this).jqGrid('getGridParam', 'selrow');
-            chGrid = $(this).attr('id');
-        }
+        let channelsSelected = $(this).jqGrid('getGridParam', 'selarrrow');
+        channelsSelected.forEach(
+            (chSelected) => {
+                chGrid = $(this).attr('id');
+                const address = $('#' + chGrid + ' tr#' + chSelected + ' td[aria-describedby$="_ADDRESS"]').html();
+                addresses.push(address)
+            });
     });
-    const address = $('#' + chGrid + ' tr#' + chSelected + ' td[aria-describedby$="_ADDRESS"]').html();
+    addresses.forEach((address) => {
+        ipcRpc.send('rpc', [daemon, 'getParamsetDescription', [address, 'VALUES']], (err, data) => {
+            const queue = [];
+            Object.keys(data).forEach(param => {
+                queue.push(param);
+            });
 
-    ipcRpc.send('rpc', [daemon, 'getParamsetDescription', [address, 'VALUES']], (err, data) => {
-        const queue = [];
-        Object.keys(data).forEach(param => {
-            queue.push(param);
-        });
-
-        function popQueue() {
-            if (queue.length > 0) {
-                const param = queue.pop();
-                rpcDialog(daemon, 'reportValueUsage', [address, param, value], () => {
-                    popQueue();
-                });
+            function popQueue() {
+                if (queue.length > 0) {
+                    const param = queue.pop();
+                    rpcDialog(daemon, 'reportValueUsage', [address, param, value], () => {
+                        popQueue();
+                    });
+                }
             }
-        }
 
-        popQueue();
-    });
+            popQueue();
+        });
+    })
 }
+
 function dialogDeleteDevice() {
     const address = $('#grid-devices tr#' + $gridDevices.jqGrid('getGridParam', 'selrow') + ' td[aria-describedby="grid-devices_ADDRESS"]').html();
     $('#del-device-name').html(names[address] ? (names[address] + ' (' + address + ')') : address);
